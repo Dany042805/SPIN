@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <title>Ruota della Fortuna</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      text-align: center;
+      margin: 30px;
+      background: #f0f0f0;
+    }
+    input[type="text"] {
+      width: 60%;
+      padding: 10px;
+      margin: 5px;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+    }
+    input[type="file"] {
+      margin: 5px;
+    }
+    button {
+      padding: 10px 25px;
+      font-size: 16px;
+      cursor: pointer;
+      border: none;
+      border-radius: 8px;
+      margin: 5px;
+    }
+    #spinBtn {
+      background: #27ae60;
+      color: white;
+    }
+    #resetBtn {
+      background: #e74c3c;
+      color: white;
+    }
+    #addRowBtn {
+      background: #2980b9;
+      color: white;
+    }
+    .input-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .input-row img {
+      max-height: 30px;
+      vertical-align: middle;
+      display: none;
+    }
+
+    #wheelContainer {
+      position: relative;
+      display: inline-block;
+      margin-top: 20px;
+    }
+
+    #wheel {
+      border: 6px solid #333;
+      border-radius: 50%;
+      background: white;
+      box-shadow: 0 0 20px rgba(0, 0, 0, 0.2);
+    }
+
+    #centerArrow {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 24px;
+      height: 60px;
+      pointer-events: none;
+      z-index: 20;
+    }
+    #centerArrow .tip {
+      width: 0;
+      height: 0;
+      border-left: 12px solid transparent;
+      border-right: 12px solid transparent;
+      border-bottom: 40px solid red;
+      margin: 0 auto;
+    }
+    #centerArrow .shaft {
+      width: 4px;
+      height: 36px;
+      background: red;
+      margin: 0 auto;
+    }
+
+    /* Popup risultato */
+    #resultPopup {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 5px 20px rgba(0,0,0,0.3);
+      padding: 20px 30px;
+      z-index: 1000;
+      display: none;
+      text-align: center;
+      max-width: 300px;
+    }
+    #resultPopup img {
+      max-width: 150px;
+      max-height: 150px;
+      margin-bottom: 15px;
+      border-radius: 10px;
+    }
+    #resultPopup button {
+      padding: 8px 15px;
+      font-size: 14px;
+      cursor: pointer;
+      border: none;
+      background: #27ae60;
+      color: white;
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  <h1>🎡 Ruota Personalizzata</h1>
+
+  <div id="customInputs"></div>
+  <button id="addRowBtn" onclick="addInputRow()">➕ Aggiungi Opzione</button>
+  <button id="spinBtn" onclick="saveAndStart()">🎯 Invia e Gira</button>
+  <button id="resetBtn" onclick="resetAll()">🔄 Reset</button>
+
+  <div id="wheelContainer">
+    <canvas id="wheel" width="500" height="500"></canvas>
+    <div id="centerArrow">
+      <div class="tip"></div>
+      <div class="shaft"></div>
+    </div>
+  </div>
+
+  <div id="resultPopup">
+    <img id="resultImg" src="" alt="Immagine risultato" />
+    <div id="resultText"></div>
+    <button onclick="closePopup()">Chiudi</button>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('wheel');
+    const ctx = canvas.getContext('2d');
+    const customInputs = document.getElementById('customInputs');
+    let options = [],
+      images = [],
+      arc;
+    let startAngle = 0,
+      spinTimer,
+      spinTime = 0,
+      spinTotal = 0;
+    let loadedImages = [];
+
+    const MAX_IMAGE_DIMENSION = 100;
+
+    function addInputRow(text = '', imgSrc = '') {
+      const div = document.createElement('div');
+      div.className = 'input-row';
+      div.innerHTML = `
+        <input type="text" placeholder="Testo opzione" value="${text}" />
+        <input type="file" accept="image/*" onchange="handleImageUpload(this)" />
+        <img src="${imgSrc}" ${imgSrc ? '' : 'style="display:none;"'} />
+        <button onclick="this.parentElement.remove()">❌</button>
+      `;
+      customInputs.appendChild(div);
+    }
+
+    function handleImageUpload(input) {
+      const file = input.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        resizeImage(e.target.result, MAX_IMAGE_DIMENSION, function (resizedDataUrl) {
+          const img = input.nextElementSibling;
+          img.src = resizedDataUrl;
+          img.style.display = 'inline';
+        });
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function resizeImage(dataUrl, maxDim, callback) {
+      const img = new Image();
+      img.onload = function () {
+        const canvasResize = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        if (width > height) {
+          if (width > maxDim) {
+            height *= maxDim / width;
+            width = maxDim;
+          }
+        } else {
+          if (height > maxDim) {
+            width *= maxDim / height;
+            height = maxDim;
+          }
+        }
+        canvasResize.width = width;
+        canvasResize.height = height;
+        const ctxResize = canvasResize.getContext('2d');
+        ctxResize.clearRect(0, 0, width, height);
+        ctxResize.drawImage(img, 0, 0, width, height);
+        const resizedDataUrl = canvasResize.toDataURL('image/png');
+        callback(resizedDataUrl);
+      };
+      img.src = dataUrl;
+    }
+
+    async function loadAllImages(imgSources) {
+      const loadedImgs = [];
+      for (const src of imgSources) {
+        if (src) {
+          const img = new Image();
+          img.src = src;
+          await new Promise((resolve) => {
+            img.onload = resolve;
+            img.onerror = resolve;
+          });
+          loadedImgs.push(img);
+        } else {
+          loadedImgs.push(null);
+        }
+      }
+      return loadedImgs;
+    }
+
+    async function saveAndStart() {
+      options = [];
+      images = [];
+      const rows = customInputs.querySelectorAll('.input-row');
+      rows.forEach((row) => {
+        const text = row.querySelector('input[type="text"]').value.trim();
+        const imgElem = row.querySelector('img');
+        const imgSrc = imgElem && imgElem.style.display !== 'none' ? imgElem.src : null;
+        options.push(text || ' ');
+        images.push(imgSrc);
+      });
+      try {
+        localStorage.setItem('savedCustomOptions', JSON.stringify(options));
+        localStorage.setItem('savedCustomImages', JSON.stringify(images));
+      } catch (e) {
+        alert('Errore: Troppi dati salvati. Prova a ridurre la dimensione o il numero delle immagini.');
+        return;
+      }
+
+      arc = 2 * Math.PI / options.length;
+      loadedImages = await loadAllImages(images);
+      drawWheel(loadedImages);
+      spinTime = 0;
+      spinTotal = Math.random() * 3000 + 3000;
+      rotate(loadedImages);
+    }
+
+    function resetAll() {
+      localStorage.removeItem('savedCustomOptions');
+      localStorage.removeItem('savedCustomImages');
+      customInputs.innerHTML = '';
+      options = [];
+      images = [];
+      drawWheel([]);
+    }
+
+    function loadSavedData() {
+      const savedTexts = JSON.parse(localStorage.getItem('savedCustomOptions') || '[]');
+      const savedImgs = JSON.parse(localStorage.getItem('savedCustomImages') || '[]');
+      savedTexts.forEach((text, i) => addInputRow(text, savedImgs[i] || ''));
+    }
+
+    function drawWheel(loadedImgs = []) {
+      const center = canvas.width / 2;
+      const radius = center;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      for (let i = 0; i < options.length; i++) {
+        const angle = startAngle + i * arc;
+
+        // Slice
+        ctx.beginPath();
+        ctx.moveTo(center, center);
+        ctx.arc(center, center, radius, angle, angle + arc);
+        ctx.fillStyle = i % 2 === 0 ? '#3498db' : '#9b59b6';
+        ctx.fill();
+        ctx.stroke();
+
+        // Text
+        ctx.save();
+        ctx.translate(center, center);
+        ctx.rotate(angle + arc / 2);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#fff';
+        ctx.font = '16px sans-serif';
+        ctx.fillText(options[i], radius - 10, 0);
+        ctx.restore();
+
+        // Image più grandi e spostate
+        if (loadedImgs[i]) {
+          ctx.save();
+          ctx.translate(center, center);
+          ctx.rotate(angle + arc / 2);
+          const imgWidth = 80;
+          const imgHeight = 80;
+          const imgX = radius / 2 - 15;
+          const imgY = -imgHeight / 2;
+          ctx.drawImage(loadedImgs[i], imgX, imgY, imgWidth, imgHeight);
+          ctx.restore();
+        }
+      }
+    }
+
+    function rotate(loadedImgs) {
+      spinTime += 30;
+      if (spinTime >= spinTotal) {
+        stopSpin();
+        return;
+      }
+      const ease = easeOut(spinTime, 0, 20, spinTotal);
+      startAngle += (ease * Math.PI) / 180;
+      drawWheel(loadedImgs);
+      spinTimer = setTimeout(() => rotate(loadedImgs), 30);
+    }
+
+    function stopSpin() {
+      clearTimeout(spinTimer);
+      const degrees = (startAngle * 180) / Math.PI + 90;
+      const index = Math.floor(
+        (options.length - ((degrees % 360) / (360 / options.length))) % options.length
+      );
+
+      const popup = document.getElementById('resultPopup');
+      const imgElem = document.getElementById('resultImg');
+      const textElem = document.getElementById('resultText');
+
+      const selectedImg = loadedImages[index];
+      if (selectedImg && selectedImg.src) {
+        imgElem.src = selectedImg.src;
+        imgElem.style.display = 'block';
+      } else {
+        imgElem.style.display = 'none';
+      }
+
+      textElem.textContent = `🎉 Hai ottenuto: ${options[index]}`;
+      popup.style.display = 'block';
+    }
+
+    function closePopup() {
+      const popup = document.getElementById('resultPopup');
+      popup.style.display = 'none';
+    }
+
+    function easeOut(t, b, c, d) {
+      t /= d;
+      return -c * t * (t - 2) + b;
+    }
+
+    loadSavedData();
+    drawWheel();
+  </script>
+</body>
+</html>
